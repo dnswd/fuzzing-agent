@@ -1,0 +1,27 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+dependencies {
+    implementation project(':annotation')
+    implementation project(':agent')
+    
+    testImplementation 'junit:junit:4.13.2'
+}
+
+application {
+    mainClass = 'com.example.testing.Main'
+}
+
+tasks.register('runWithAgent', JavaExec) {
+    dependsOn ':agent:jar'
+    
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.example.testing.Main'
+    
+    jvmArgs = [
+        "-javaagent:${project(':agent').jar.archiveFile.get().asFile.absolutePath}"
+    ]
+}
+

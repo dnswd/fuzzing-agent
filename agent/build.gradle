@@ -1,0 +1,27 @@
+plugins {
+    id 'java-library'
+}
+
+dependencies {
+    implementation project(':annotation')
+    // Add your agent dependencies here
+    implementation 'org.javassist:javassist:3.29.2-GA'
+    implementation group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: '2.18.3'
+    
+    testImplementation 'junit:junit:4.13.2'
+}
+
+jar {
+    manifest {
+        attributes(
+            'Premain-Class': 'com.example.agent.Agent',
+            'Agent-Class': 'com.example.agent.Agent',
+            'Can-Redefine-Classes': 'true',
+            'Can-Retransform-Classes': 'true',
+            'Can-Set-Native-Method-Prefix': 'false',
+            'Implementation-Title': 'Java Agent',
+            'Implementation-Version': project.version
+        )
+    }
+}
+

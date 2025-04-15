@@ -1,0 +1,4 @@
+rootProject.name = 'fuzzing-agent'
+include 'agent', 'testing', 'annotation'
+include 'annotation'
+

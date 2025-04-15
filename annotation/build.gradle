@@ -1,0 +1,13 @@
+plugins {
+    id 'java-library'
+}
+
+dependencies {
+    // This module should have minimal dependencies
+    testImplementation 'junit:junit:4.13.2'
+}
+
+// Ensure the annotations are retained at runtime
+tasks.withType(JavaCompile) {
+    options.compilerArgs << "-parameters"
+}

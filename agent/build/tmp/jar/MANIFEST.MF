@@ -1,0 +1,9 @@
+Manifest-Version: 1.0
+Premain-Class: com.example.agent.Agent
+Agent-Class: com.example.agent.Agent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: false
+Implementation-Title: Java Agent
+Implementation-Version: unspecified
+
