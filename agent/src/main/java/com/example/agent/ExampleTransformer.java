@@ -15,7 +15,7 @@ import javassist.bytecode.AnnotationsAttribute;
 import javassist.bytecode.ClassFile;
 
 public class ExampleTransformer implements ClassFileTransformer {
-    private static final String ANNOTATION_NAME = "id.dendenden.Instrumented";
+    public static final String ANNOTATION_NAME = "id.dendenden.Instrumented";
     private final MethodRegistry registry;
 
     public ExampleTransformer(MethodRegistry registry) {

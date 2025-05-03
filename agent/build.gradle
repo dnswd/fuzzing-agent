@@ -7,6 +7,9 @@ dependencies {
     // Add your agent dependencies here
     implementation 'org.javassist:javassist:3.29.2-GA'
     implementation group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: '2.18.3'
+    implementation 'org.jacoco:org.jacoco.core:0.8.13'
+    implementation 'org.jacoco:org.jacoco.report:0.8.13'
+    implementation 'org.jacoco:org.jacoco.agent:0.8.13'
     
     testImplementation 'junit:junit:4.13.2'
 }
