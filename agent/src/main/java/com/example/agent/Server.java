@@ -3,12 +3,14 @@ package com.example.agent;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -25,12 +27,14 @@ import java.util.stream.Collectors;
 
 public class Server {
     private static volatile Server instance;
-    private MethodRegistry methodRegistry;
-    private Server(MethodRegistry methodRegistry) {
+    private final MethodRegistry methodRegistry;
+    private final ObjectMapper mapper;
+    private Server(MethodRegistry methodRegistry, ObjectMapper mapper) {
         this.methodRegistry = methodRegistry;
+        this.mapper = mapper;
         startHttpServer();
     }
-    public static Server getInstance(MethodRegistry methodRegistry) {
+    public static Server getInstance(MethodRegistry methodRegistry, ObjectMapper mapper) {
         Server result = instance;
         if (result != null) {
             return result;
@@ -38,7 +42,7 @@ public class Server {
         synchronized (Server.class) {
             result = instance;
             if (result == null) {
-                instance = result = new Server(methodRegistry);
+                instance = result = new Server(methodRegistry, mapper);
             }
             return result;
         }
@@ -163,136 +167,7 @@ public class Server {
             }
         });
 
-        server.createContext("/invoke-method", exchange -> {
-            if (!"POST".equals(exchange.getRequestMethod())) {
-                sendErrorResponse(exchange, 405, "Method not allowed. Use POST request.");
-                return;
-            }
-
-            try {
-                // Parse the request body
-                ObjectMapper mapper = new ObjectMapper();
-                mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-                JsonNode requestNode = mapper.readTree(exchange.getRequestBody());
-
-                // Extract method identifier and parameters
-                if (!requestNode.has("method") || !requestNode.has("params")) {
-                    sendErrorResponse(exchange, 400, "Request must include 'method' and 'params' fields");
-                    return;
-                }
-
-                String methodSignature = requestNode.get("method").asText();
-                JsonNode paramsNode = requestNode.get("params");
-
-                // Get parameter info for the method from registry
-                Optional<List<MethodRegistry.ParamInfo>> paramInfoOpt = methodRegistry.getParamsForMethod(methodSignature);
-                if (!paramInfoOpt.isPresent()) {
-                    sendErrorResponse(exchange, 404, "Method not found in registry: " + methodSignature);
-                    return;
-                }
-
-                List<MethodRegistry.ParamInfo> paramInfoList = paramInfoOpt.get();
-
-                // Parse the class and method name from the signature
-                int openParenIndex = methodSignature.indexOf('(');
-                if (openParenIndex == -1) {
-                    sendErrorResponse(exchange, 400, "Invalid method signature format");
-                    return;
-                }
-
-                String classAndMethod = methodSignature.substring(0, openParenIndex);
-                int lastDotBeforeParen = classAndMethod.lastIndexOf('.');
-
-                if (lastDotBeforeParen == -1) {
-                    sendErrorResponse(exchange, 400, "Invalid method signature format");
-                    return;
-                }
-
-                String className = classAndMethod.substring(0, lastDotBeforeParen);
-                String methodName = classAndMethod.substring(lastDotBeforeParen + 1);
-
-                // Get the class and create an instance
-                Class<?> targetClass;
-                try {
-                    targetClass = Class.forName(className);
-                } catch (ClassNotFoundException e) {
-                    sendErrorResponse(exchange, 404, "Class not found: " + className);
-                    return;
-                }
-
-                Object instance = targetClass.getDeclaredConstructor().newInstance();
-
-                // Prepare parameters and parameter types for method invocation
-                Object[] methodParams = new Object[paramInfoList.size()];
-                Class<?>[] paramTypes = new Class<?>[paramInfoList.size()];
-
-                for (int i = 0; i < paramInfoList.size(); i++) {
-                    MethodRegistry.ParamInfo paramInfo = paramInfoList.get(i);
-                    try {
-                        // Extract just the base type name without fields
-                        String baseTypeName = paramInfo.typeName;
-                        if (baseTypeName.contains(" ")) {
-                            baseTypeName = baseTypeName.substring(0, baseTypeName.indexOf(" "));
-                        }
-
-                        Class<?> paramClass = Class.forName(baseTypeName);
-                        paramTypes[i] = paramClass;
-
-                        // Check if this parameter index exists in the request
-                        if (i >= paramsNode.size()) {
-                            sendErrorResponse(exchange, 400, "Missing parameter at index " + i);
-                            return;
-                        }
-
-                        JsonNode paramNode = paramsNode.get(i);
-
-                        // Handle static nested classes (with $ in the name)
-                        if (paramClass.getName().contains("$")) {
-                            // This is a nested class - try to create it using field values
-                            methodParams[i] = createNestedClassInstance(paramClass, paramNode);
-                        } else {
-                            // Regular class
-                            methodParams[i] = mapper.treeToValue(paramNode, paramClass);
-                        }
-                    } catch (ClassNotFoundException e) {
-                        sendErrorResponse(exchange, 500, "Parameter type not found: " + paramInfo.typeName);
-                        return;
-                    } catch (Exception e) {
-                        sendErrorResponse(exchange, 500, "Error creating parameter: " + e.getMessage());
-                        return;
-                    }
-                }
-
-                // Get and invoke the method
-                try {
-                    Method method = targetClass.getMethod(methodName, paramTypes);
-                    Object result = method.invoke(instance, methodParams);
-
-                    // Send the result back
-                    byte[] responseBytes;
-                    if (result == null) {
-                        responseBytes = "null".getBytes();
-                    } else {
-                        responseBytes = mapper.writeValueAsBytes(result);
-                    }
-
-                    exchange.getResponseHeaders().set("Content-Type", "application/json");
-                    exchange.sendResponseHeaders(200, responseBytes.length);
-                    exchange.getResponseBody().write(responseBytes);
-                } catch (NoSuchMethodException e) {
-                    sendErrorResponse(exchange, 404, "Method not found: " + methodName);
-                } catch (InvocationTargetException e) {
-                    sendErrorResponse(exchange, 500, "Error in method execution: " +
-                        (e.getCause() != null ? e.getCause().getMessage() : e.getMessage()));
-                } catch (Exception e) {
-                    sendErrorResponse(exchange, 500, "Error invoking method: " + e.getMessage());
-                }
-            } catch (Exception e) {
-                sendErrorResponse(exchange, 500, "Server error: " + e.getMessage());
-            } finally {
-                exchange.close();
-            }
-        });
+        server.createContext("/invoke-method", this::handleInvoke);
     }
 
     private Object createNestedClassInstance(Class<?> nestedClass, JsonNode jsonNode) throws Exception {
@@ -429,5 +304,209 @@ public class Server {
         exchange.sendResponseHeaders(statusCode, responseBytes.length);
         exchange.getResponseBody().write(responseBytes);
         exchange.close();
+    }
+
+    public void handleInvoke(HttpExchange exchange) {
+        try {
+            if (!isPost(exchange)) {
+                sendError(exchange, 405, "Method not allowed");
+            }
+
+            JsonNode req = parseJson(exchange);
+            if (req == null) return;
+
+            if (!hasRequiredFields(req)) {
+                sendError(exchange, 400, "Missing method or params");
+            }
+
+            String signature = req.get("method").asText();
+
+            List<MethodRegistry.ParamInfo> paramInfo = getParamInfo(signature, exchange);
+            if (paramInfo == null) return;
+
+            MethodMeta meta = parseSignature(signature, exchange);
+            if (meta == null) return;
+
+            Object instance = createInstance(meta.className, exchange);
+            if (instance == null) return;
+
+            Object[] args = buildArgs(paramInfo, req.get("params"), exchange);
+            if (args == null) return;
+
+            Object result = invoke(instance, meta.methodName, args, paramInfo, exchange);
+            if (exchange.getResponseCode() != 200) return;
+
+            sendJson(exchange, result);
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private static class MethodMeta {
+        final String className;
+        final String methodName;
+
+        MethodMeta(String className, String methodName) {
+            this.className = className;
+            this.methodName = methodName;
+        }
+    }
+
+    private boolean isPost(HttpExchange exchange) {
+        return "POST".equals(exchange.getRequestMethod());
+    }
+
+    private JsonNode parseJson(HttpExchange exchange) {
+        try {
+            return mapper.readTree(exchange.getRequestBody());
+        } catch (Exception e) {
+            sendError(exchange, 400, "Invalid JSON: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private boolean hasRequiredFields(JsonNode req) {
+        return req.has("method") && req.has("params");
+    }
+
+    private List<MethodRegistry.ParamInfo> getParamInfo(String signature, HttpExchange exchange) {
+        Optional<List<MethodRegistry.ParamInfo>> info = methodRegistry.getParamsForMethod(signature);
+        if (!info.isPresent()) {
+            sendError(exchange, 404, "Method not found: " + signature);
+            return null;
+        }
+        return info.get();
+    }
+
+    private MethodMeta parseSignature(String signature, HttpExchange exchange) {
+        int paren = signature.indexOf('(');
+        if (paren == -1) {
+            sendError(exchange, 400, "Invalid signature format");
+            return null;
+        }
+
+        String fullName = signature.substring(0, paren);
+        int dot = fullName.lastIndexOf('.');
+
+        if (dot == -1) {
+            sendError(exchange, 400, "Invalid signature format");
+            return null;
+        }
+
+        return new MethodMeta(
+            fullName.substring(0, dot),
+            fullName.substring(dot + 1)
+        );
+    }
+
+    private Object createInstance(String className, HttpExchange exchange) {
+        try {
+            return Class.forName(className).getDeclaredConstructor().newInstance();
+        } catch (ClassNotFoundException e) {
+            sendError(exchange, 404, "Class not found: " + className);
+            return null;
+        } catch (Exception e) {
+            sendError(exchange, 500, "Error creating instance: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private Object[] buildArgs(List<MethodRegistry.ParamInfo> paramInfo, JsonNode params, HttpExchange exchange) {
+        Object[] args = new Object[paramInfo.size()];
+
+        for (int i = 0; i < paramInfo.size(); i++) {
+            if (i >= params.size()) {
+                sendError(exchange, 400, "Missing parameter at index " + i);
+                return null;
+            }
+
+            try {
+                String typeName = cleanTypeName(paramInfo.get(i).typeName);
+                Class<?> paramClass = Class.forName(typeName);
+                args[i] = deserializeParam(paramClass, params.get(i));
+            } catch (ClassNotFoundException e) {
+                sendError(exchange, 500, "Parameter type not found: " + paramInfo.get(i).typeName);
+                return null;
+            } catch (Exception e) {
+                sendError(exchange, 500, "Error creating parameter: " + e.getMessage());
+                return null;
+            }
+        }
+
+        return args;
+    }
+
+    private String cleanTypeName(String typeName) {
+        return typeName.contains(" ") ? typeName.substring(0, typeName.indexOf(" ")) : typeName;
+    }
+
+    private Object deserializeParam(Class<?> paramClass, JsonNode paramNode) throws Exception {
+        if (paramClass.getName().contains("$")) {
+            return createNestedInstance(paramClass, paramNode);
+        }
+        return mapper.treeToValue(paramNode, paramClass);
+    }
+
+    private Object createNestedInstance(Class<?> nestedClass, JsonNode paramNode) {
+        // Implementation for nested class instantiation
+        throw new UnsupportedOperationException("Nested class creation not implemented");
+    }
+
+    private Object invoke(Object instance, String methodName, Object[] args,
+                          List<MethodRegistry.ParamInfo> paramInfo, HttpExchange exchange) {
+        try {
+            Class<?>[] paramTypes = new Class<?>[paramInfo.size()];
+            for (int i = 0; i < paramInfo.size(); i++) {
+                paramTypes[i] = Class.forName(cleanTypeName(paramInfo.get(i).typeName));
+            }
+
+            Method method = instance.getClass().getMethod(methodName, paramTypes);
+            return method.invoke(instance, args);
+        } catch (NoSuchMethodException e) {
+            sendError(exchange, 404, "Method not found: " + methodName);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            sendError(exchange, 500, "Execution error: " + cause.getMessage());
+        } catch (Exception e) {
+            sendError(exchange, 500, "Invocation error: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private void sendJson(HttpExchange exchange, Object result) {
+        try {
+            byte[] bytes = result == null ?
+                "null".getBytes() : mapper.writeValueAsBytes(result);
+
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+        } catch (IOException e) {
+            sendError(exchange, 500, "Error sending response");
+        }
+    }
+
+    private boolean sendError(HttpExchange exchange, int code, String message) {
+        try {
+            // Create error object without using Java 9+ Map.of()
+            ObjectNode errorNode = mapper.createObjectNode();
+            errorNode.put("error", message);
+            byte[] bytes = mapper.writeValueAsBytes(errorNode);
+
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(code, bytes.length);
+
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+        } catch (IOException e) {
+            try {
+                exchange.sendResponseHeaders(500, 0);
+            } catch (IOException ignored) {}
+        }
+        return false;
     }
 }
