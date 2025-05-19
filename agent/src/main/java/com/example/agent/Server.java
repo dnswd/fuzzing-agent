@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.inject.ConfigurationException;
+import com.google.inject.Injector;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.BufferedReader;
@@ -27,6 +29,7 @@ import java.util.stream.Collectors;
 
 public class Server {
     private static volatile Server instance;
+    private static Injector injector;
     private final MethodRegistry methodRegistry;
     private final ObjectMapper mapper;
     private Server(MethodRegistry methodRegistry, ObjectMapper mapper) {
@@ -46,6 +49,10 @@ public class Server {
             }
             return result;
         }
+    }
+
+    public void setInjector(Injector injectorInstance) {
+        injector = injectorInstance;
     }
 
     private void startHttpServer() {
@@ -401,15 +408,33 @@ public class Server {
 
     private Object createInstance(String className, HttpExchange exchange) {
         try {
-            return Class.forName(className).getDeclaredConstructor().newInstance();
+            if (injector == null) {
+                sendError(exchange, 500, "Injector not available");
+                return null;
+            }
+            Class<?> clazz = Class.forName(className);
+            return injector.getInstance(clazz);
         } catch (ClassNotFoundException e) {
             sendError(exchange, 404, "Class not found: " + className);
+            return null;
+        } catch (ConfigurationException e) {
+            sendError(exchange, 404, "Class not bound in Guice: " + className);
             return null;
         } catch (Exception e) {
             sendError(exchange, 500, "Error creating instance: " + e.getMessage());
             return null;
         }
     }
+        //try {
+        //    return Class.forName(className).getDeclaredConstructor().newInstance();
+        //} catch (ClassNotFoundException e) {
+        //    sendError(exchange, 404, "Class not found: " + className);
+        //    return null;
+        //} catch (Exception e) {
+        //    sendError(exchange, 500, "Error creating instance: " + e.getMessage());
+        //    return null;
+        //}
+    //}
 
     private Object[] buildArgs(List<MethodRegistry.ParamInfo> paramInfo, JsonNode params, HttpExchange exchange) {
         Object[] args = new Object[paramInfo.size()];

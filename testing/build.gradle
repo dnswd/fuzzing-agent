@@ -6,6 +6,7 @@ plugins {
 dependencies {
     implementation project(':annotation')
     implementation project(':agent')
+    implementation group: 'com.google.inject', name: 'guice', version: '7.0.0'
     
     testImplementation 'junit:junit:4.13.2'
 }

@@ -1,5 +1,8 @@
 package com.example.agent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.inject.Guice;
+import com.google.inject.Injector;
 import java.lang.instrument.Instrumentation;
 
 public class Agent {
@@ -15,7 +18,9 @@ public class Agent {
 
     private static void init(String agentArgs, Instrumentation inst) {
         MethodRegistry methodRegistry = new MethodRegistry();
-        Server server = Server.getInstance(methodRegistry);
+        ObjectMapper objectMapper = new ObjectMapper();
+        Injector injector = Guice.createInjector();
+        Server server = Server.getInstance(methodRegistry, objectMapper);
         // Register transformer
         inst.addTransformer(new ExampleTransformer(methodRegistry), true);
     }

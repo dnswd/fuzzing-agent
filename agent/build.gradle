@@ -7,6 +7,7 @@ dependencies {
     // Add your agent dependencies here
     implementation 'org.javassist:javassist:3.29.2-GA'
     implementation group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: '2.18.3'
+    implementation group: 'com.google.inject', name: 'guice', version: '7.0.0'
     
     testImplementation 'junit:junit:4.13.2'
 }
